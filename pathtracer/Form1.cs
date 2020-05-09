@@ -24,7 +24,7 @@ namespace pathtracer
         private void button1_Click(object sender, EventArgs e)
         {
             PathTracer pt = new PathTracer();
-            pt.Render((Bitmap)pictureBox1.Image);
+            pt.Render();
         }
     }
 }

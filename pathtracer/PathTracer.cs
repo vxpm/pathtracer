@@ -12,18 +12,21 @@ namespace pathtracer
     public class PathTracer
     {
         // Image Properties
-        const int width = 800;
-        const int height = 400;
-        const int sampleCount = 32;
-        const int maxBounces = 16;
+        const int width = 1600;
+        const int height = 800;
+        const int sampleCount = 512;
+        const int maxBounces = 24;
 
-        Vector3[,] pixels;
-        public Bitmap Image;
+        const int tasksToUse = 12;
+        const int remainder = height % tasksToUse;
+        const int rowsPerTask = (height - remainder) / tasksToUse;
+
 
         Vector3 camera;
         Vector3[] imagePlane;
+        Vector3[,] pixels;
 
-        readonly Vector3 backgroundColor = new Vector3(0, 0, 0);
+        readonly Vector3 ambientColor = new Vector3(20, 20, 20);
 
         List<Shape> instancedShapes = new List<Shape>();
 
@@ -42,82 +45,28 @@ namespace pathtracer
 
             //  SCENE 1
             instancedShapes.Add(new Sphere(new Vector3(-1.5, -1, 2.25), 0.8, new Material(new Vector3(50, 255, 255), 1)));
-            //instancedShapes.Add(new Sphere(new Vector3(-0.5, 1, 6), 1, new Vector3(25, 255, 20))); // test
             instancedShapes.Add(new Sphere(new Vector3(0, 0, 3), 1, new Material(new Vector3(255, 40, 20), 1)));
             instancedShapes.Add(new Sphere(new Vector3(2, -1, 3.5), 1, new Material(new Vector3(255, 255, 60), 1)));
+            instancedShapes.Add(new Sphere(new Vector3(0, -10002.8, 2), 10000, new Material(new Vector3(255, 255, 255), 1)));
             instancedShapes.Add(new Sphere(new Vector3(2.5, 2, 1), 2, new Material(new Vector3(500, 500, 500), 1), true));
             instancedShapes.Add(new Sphere(new Vector3(-3.5, 4, 2.5), 2, new Material(new Vector3(25, 500, 25), 1), true));
-
             instancedShapes.Add(new Sphere(new Vector3(-20, -1, 25), 1, new Material(new Vector3(500, 500, 599), 1), true));
-
-            instancedShapes.Add(new Sphere(new Vector3(0, -10002.8, 2), 10000, new Material(new Vector3(255, 255, 255), 1)));
-
-            //instancedShapes.Add(new InfinitePlane(new Vector3(0, 0, 3.5), new Vector3(0, 0, 1).Normalized, new Vector3(255, 255, 255), false));
-            //instancedShapes.Add(new InfinitePlane(new Vector3(0, -2, 0), new Vector3(0, -1, 0).Normalized, new Vector3(255, 255, 255), false));
-            //instancedShapes.Add(new Sphere(new Vector3(0, -8, 3), 2, new Vector3(255, 255, 255), true));
 
         }
 
-        public async void Render(Bitmap outputImage = null)
+        public async void Render()
         {
-            int renderingPixels = 0;
             Setup();
 
-            for(int _y = 0; _y < height; _y++)
+            Task[] tasks = new Task[tasksToUse];
+            for(int i = 0; i < tasksToUse - 1; i++)
             {
-                for (int _x = 0; _x < width; _x++)
-                {
-                    while (renderingPixels > 23)
-                        await Task.Yield();
-
-#pragma warning disable CS4014 // Como esta chamada não é esperada, a execução do método atual continua antes de a chamada ser concluída
-
-                    Interlocked.Increment(ref renderingPixels);
-                    int x = _x;
-                    int y = _y;
-
-                    Task.Run(() =>
-                    {
-                        Vector3 topX, bottomX, imagePlanePoint, dir;
-                        Vector3[] samples = new Vector3[sampleCount];
-
-                        for (int i = 0; i < sampleCount; i++)
-                        {
-                            topX = imagePlane[0].Lerp(imagePlane[1], (x + StaticRandom.NextDouble() / 2) / width);
-                            bottomX = imagePlane[2].Lerp(imagePlane[3], (x + StaticRandom.NextDouble() / 2) / width);
-                            imagePlanePoint = topX.Lerp(bottomX, (y + StaticRandom.NextDouble() / 2) / height);
-                            dir = (imagePlanePoint - camera).Normalized;
-
-                            List<Vector3> colorsHit = new List<Vector3>();
-
-                            // if hit a light before reaching max. bounces
-                            if (TraceRay(camera, dir, colorsHit, null))
-                            {
-                                samples[i] = ComputeSample(colorsHit);
-                            } else
-                            {
-                                // if it doesn't hit any light, make it hit a ambient light and compute the sample
-                                colorsHit.Add(new Vector3(20, 20, 20));
-                                samples[i] = ComputeSample(colorsHit);
-                            }
-                        }
-
-                        Vector3 finalColor = Vector3.Zero;
-                        for (int i = 0; i < sampleCount; i++)
-                        {
-                            finalColor += samples[i];
-                        }
-                        finalColor /= sampleCount;
-
-                        pixels[x, y] = finalColor;
-
-                        Interlocked.Decrement(ref renderingPixels);
-                    });
-#pragma warning restore CS4014 // Como esta chamada não é esperada, a execução do método atual continua antes de a chamada ser concluída
-                }
-
-                Console.WriteLine($"{_y}/{height}");
+                int taslkIndex = i;
+                tasks[i] = Task.Run(() => RenderRows(rowsPerTask * taslkIndex, rowsPerTask * (taslkIndex + 1)));
             }
+            tasks[tasksToUse - 1] = Task.Run(() => RenderRows(rowsPerTask * (tasksToUse - 1), rowsPerTask * tasksToUse + remainder));
+
+            await Task.WhenAll(tasks);
 
             Bitmap render = new Bitmap(width, height);
             for (int y = 0; y < height; y++)
@@ -130,8 +79,54 @@ namespace pathtracer
             }
 
             render.Save("out.png", System.Drawing.Imaging.ImageFormat.Png);
+            Console.WriteLine("rendering complete! saved to out.png");
+        }
 
-            outputImage = render;
+        void RenderRows(int start, int end)
+        {
+            Console.WriteLine($"rendering: {start} -> {end}");
+
+            for (int y = start; y < end; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Vector3 topX, bottomX, imagePlanePoint, dir;
+                    Vector3[] samples = new Vector3[sampleCount];
+
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        topX = imagePlane[0].Lerp(imagePlane[1], (x + StaticRandom.NextDouble() / 2) / width);
+                        bottomX = imagePlane[2].Lerp(imagePlane[3], (x + StaticRandom.NextDouble() / 2) / width);
+                        imagePlanePoint = topX.Lerp(bottomX, (y + StaticRandom.NextDouble() / 2) / height);
+                        dir = (imagePlanePoint - camera).Normalized;
+
+                        List<Vector3> colorsHit = new List<Vector3>();
+
+                        // if hit a light before reaching max. bounces
+                        if (TraceRay(camera, dir, colorsHit, null))
+                        {
+                            samples[i] = ComputeSample(colorsHit);
+                        }
+                        else
+                        {
+                            // if it doesn't hit any light, make it hit a ambient light and compute the sample
+                            colorsHit.Add(ambientColor);
+                            samples[i] = ComputeSample(colorsHit);
+                        }
+                    }
+
+                    Vector3 finalColor = Vector3.Zero;
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        finalColor += samples[i];
+                    }
+                    finalColor /= sampleCount;
+
+                    pixels[x, y] = finalColor;
+                }
+            }
+
+            Console.WriteLine($"complete: {start} -> {end}");
         }
 
         public byte RoundToByte(double n)
