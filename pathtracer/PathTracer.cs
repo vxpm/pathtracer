@@ -129,7 +129,7 @@ namespace pathtracer
             Console.WriteLine($"complete: {start} -> {end}");
         }
 
-        public byte RoundToByte(double n)
+        byte RoundToByte(double n)
         {
             return Convert.ToByte(Math.Floor(Math.Min(Math.Max(n, 0), 255)));
         }
